@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
+    "kokoro>=0.9.4",
     "numpy>=2.5.3",
     "pymupdf>=1.28.2",
     "python-multipart>=0.0.32",
+    "soundfile>=0.14.0",
     "torch>=2.14.0",
     "uvicorn[standard]>=0.53.0",
 ]
