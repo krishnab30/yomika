@@ -7,6 +7,7 @@ from backend.app.services.pdf_extractor import (
     PDFExtractionError,
     extract_text,
 )
+from backend.app.services.text_normalizer import normalize_pdf
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -51,6 +52,13 @@ async def upload_book(
             output_path=text_path,
         )
 
+        normalized_path = book_directory / "normalized.txt"
+
+        normalization_stats = normalize_pdf(
+            pdf_path=pdf_path,
+            output_path=normalized_path,
+        )
+
     except PDFExtractionError as exc:
         raise HTTPException(
             status_code=422,
@@ -69,6 +77,26 @@ async def upload_book(
     return {
         "book_id": book_id,
         "filename": file.filename,
-        "status": "extracted",
-        **extraction_stats,
+        "status": "normalized",
+        "extraction": extraction_stats,
+        "normalization": {
+            "source_page_count": (
+                normalization_stats.source_page_count
+            ),
+            "selected_page_count": (
+                normalization_stats.selected_page_count
+            ),
+            "chapter_count": (
+                normalization_stats.chapter_count
+            ),
+            "paragraph_count": (
+                normalization_stats.paragraph_count
+            ),
+            "character_count": (
+                normalization_stats.character_count
+            ),
+            "stop_page": (
+                normalization_stats.stop_page
+            ),
+        },
     }
