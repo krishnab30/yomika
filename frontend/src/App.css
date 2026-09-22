@@ -1,0 +1,25 @@
+#root {
+  min-height: 100vh;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+h1 {
+  margin-bottom: 8px;
+}
+
+p {
+  color: #666;
+}
+
+button {
+  margin-top: 24px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
