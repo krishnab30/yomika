@@ -8,6 +8,8 @@ import Header from "./components/Header";
 import UploadBook from "./components/UploadBook";
 import BookProcessing from "./components/BookProcessing";
 import BookLibrary from "./components/BookLibrary";
+import type { Book } from "./api/books";
+import AudioPlayer from "./components/AudioPlayer";
 
 function App() {
   const [bookId, setBookId] =
@@ -18,6 +20,19 @@ function App() {
 
   const [libraryRefreshKey, setLibraryRefreshKey] =
     useState(0);
+
+  const [selectedBook, setSelectedBook] =
+  useState<Book | null>(null);
+
+  const handlePlayBook = (
+  book: Book,
+  ) => {
+  setSelectedBook(book);
+  };
+
+  const handleClosePlayer = () => {
+  setSelectedBook(null);
+  };
 
   const handleUploadSuccess = (
     uploadedBookId: string,
@@ -65,7 +80,17 @@ function App() {
 
       <BookLibrary
         refreshKey={libraryRefreshKey}
+        onPlayBook={handlePlayBook}
       />
+
+      {selectedBook && (
+      <AudioPlayer
+        key={selectedBook.id}
+        bookId={selectedBook.id}
+        title={selectedBook.title}
+        onClose={handleClosePlayer}
+      />
+    )}
     </main>
   );
 }

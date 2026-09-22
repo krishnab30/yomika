@@ -2,6 +2,7 @@ import type { Book } from "../api/books";
 
 interface BookCardProps {
   book: Book;
+  onPlay: (book: Book) => void;
 }
 
 function getStatusLabel(book: Book): string {
@@ -25,6 +26,7 @@ function getStatusLabel(book: Book): string {
 
 function BookCard({
   book,
+  onPlay,
 }: BookCardProps) {
   const createdDate =
     new Date(book.created_at);
@@ -63,12 +65,20 @@ function BookCard({
         </div>
       )}
 
-      {book.status === "completed" && (
+    {book.status === "completed" && (
+    <div className="book-actions">
         <p className="ready-message">
-          Audiobook ready to play.
+        Audiobook ready to play.
         </p>
-      )}
 
+        <button
+        type="button"
+        onClick={() => onPlay(book)}
+        >
+        Play audiobook
+        </button>
+    </div>
+    )}
       {book.status === "failed" && (
         <p className="error-message">
           {book.message}

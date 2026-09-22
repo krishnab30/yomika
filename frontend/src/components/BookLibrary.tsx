@@ -12,10 +12,12 @@ import BookCard from "./BookCard";
 
 interface BookLibraryProps {
   refreshKey: number;
+  onPlayBook: (book: Book) => void;
 }
 
 function BookLibrary({
   refreshKey,
+  onPlayBook,
 }: BookLibraryProps) {
   const [books, setBooks] =
     useState<Book[]>([]);
@@ -106,6 +108,7 @@ function BookLibrary({
               <BookCard
                 key={book.id}
                 book={book}
+                onPlay={onPlayBook}
               />
             ))}
           </div>

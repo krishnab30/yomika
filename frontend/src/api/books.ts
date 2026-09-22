@@ -75,3 +75,9 @@ export async function getBooks(): Promise<Book[]> {
 
   return response.json();
 }
+
+export function getBookAudioUrl(
+  bookId: string,
+): string {
+  return `/api/books/${bookId}/audio`;
+}

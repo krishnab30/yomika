@@ -132,3 +132,65 @@ progress {
 .error-message {
   color: #b42318;
 }
+
+.audio-player {
+  position: sticky;
+  bottom: 16px;
+  margin-top: 32px;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  background: white;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+.audio-player-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.audio-player-header h2 {
+  margin: 4px 0 0;
+}
+
+.audio-player-label {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #777;
+}
+
+.audio-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.audio-player-controls input[type="range"] {
+  flex: 1;
+}
+
+.audio-player-secondary {
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.audio-player-secondary label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.book-actions {
+  margin-top: 16px;
+}
+
+.book-actions .ready-message {
+  margin-bottom: 12px;
+}
