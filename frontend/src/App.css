@@ -42,3 +42,9 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
+
+progress {
+  width: 100%;
+  height: 16px;
+  margin-top: 20px;
+}

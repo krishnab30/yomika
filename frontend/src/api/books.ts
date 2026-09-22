@@ -24,3 +24,28 @@ export async function uploadBook(
 
   return response.json();
 }
+
+export interface BookStatusResponse {
+  book_id: string;
+  status: string;
+  stage: string;
+  progress: number;
+  message: string;
+  updated_at: string;
+}
+
+export async function getBookStatus(
+  bookId: string,
+): Promise<BookStatusResponse> {
+  const response = await fetch(
+    `/api/books/${bookId}/status`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch book status: ${response.status}`,
+    );
+  }
+
+  return response.json();
+}

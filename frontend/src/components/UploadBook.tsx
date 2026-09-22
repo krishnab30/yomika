@@ -6,7 +6,11 @@ import {
 
 import { uploadBook } from "../api/books";
 
-function UploadBook() {
+interface UploadBookProps {
+  onUploadSuccess: (bookId: string) => void;
+}
+
+function UploadBook({ onUploadSuccess }: UploadBookProps) {
   const [selectedFile, setSelectedFile] =
     useState<File | null>(null);
 
@@ -46,6 +50,8 @@ function UploadBook() {
       setMessage(
         `Upload successful: ${result.title}`,
       );
+
+      onUploadSuccess(result.book_id);
     } catch (error) {
       const errorMessage =
         error instanceof Error
