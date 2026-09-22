@@ -48,3 +48,87 @@ progress {
   height: 16px;
   margin-top: 20px;
 }
+
+.library {
+  margin-top: 48px;
+}
+
+.library-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.library-header h2 {
+  margin: 0;
+}
+
+.library-header span {
+  color: #777;
+}
+
+.book-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.book-card {
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background: white;
+}
+
+.book-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.book-card h3 {
+  margin: 0;
+}
+
+.book-filename,
+.book-date {
+  color: #777;
+  font-size: 14px;
+}
+
+.status {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #eee;
+}
+
+.book-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.book-progress progress {
+  flex: 1;
+  margin: 0;
+}
+
+.book-progress span {
+  font-size: 13px;
+  color: #666;
+}
+
+.ready-message {
+  margin-top: 16px;
+}
+
+.error-message {
+  color: #b42318;
+}

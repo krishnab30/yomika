@@ -4,6 +4,28 @@ export interface BookCreatedResponse {
   status: string;
 }
 
+export interface BookStatusResponse {
+  book_id: string;
+  status: string;
+  stage: string;
+  progress: number;
+  message: string;
+  updated_at: string;
+}
+
+export interface Book {
+  id: string;
+  title: string;
+  original_filename: string;
+  status: string;
+  stage: string;
+  progress: number;
+  message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+
 export async function uploadBook(
   file: File,
 ): Promise<BookCreatedResponse> {
@@ -25,14 +47,6 @@ export async function uploadBook(
   return response.json();
 }
 
-export interface BookStatusResponse {
-  book_id: string;
-  status: string;
-  stage: string;
-  progress: number;
-  message: string;
-  updated_at: string;
-}
 
 export async function getBookStatus(
   bookId: string,
@@ -44,6 +58,18 @@ export async function getBookStatus(
   if (!response.ok) {
     throw new Error(
       `Failed to fetch book status: ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function getBooks(): Promise<Book[]> {
+  const response = await fetch("/api/books");
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch books: ${response.status}`,
     );
   }
 

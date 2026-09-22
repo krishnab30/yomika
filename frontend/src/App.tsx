@@ -7,6 +7,7 @@ import "./App.css";
 import Header from "./components/Header";
 import UploadBook from "./components/UploadBook";
 import BookProcessing from "./components/BookProcessing";
+import BookLibrary from "./components/BookLibrary";
 
 function App() {
   const [bookId, setBookId] =
@@ -15,15 +16,26 @@ function App() {
   const [isProcessing, setIsProcessing] =
     useState(false);
 
+  const [libraryRefreshKey, setLibraryRefreshKey] =
+    useState(0);
+
   const handleUploadSuccess = (
     uploadedBookId: string,
   ) => {
     setBookId(uploadedBookId);
     setIsProcessing(true);
+
+    setLibraryRefreshKey(
+      (current) => current + 1,
+    );
   };
 
   const handleProcessingComplete = () => {
     setIsProcessing(false);
+
+    setLibraryRefreshKey(
+      (current) => current + 1,
+    );
   };
 
   return (
@@ -50,6 +62,10 @@ function App() {
           }
         />
       )}
+
+      <BookLibrary
+        refreshKey={libraryRefreshKey}
+      />
     </main>
   );
 }
