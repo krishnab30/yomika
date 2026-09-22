@@ -1,5 +1,7 @@
 import "./App.css";
+
 import Header from "./components/Header";
+import UploadBook from "./components/UploadBook";
 
 function App() {
   return (
@@ -10,9 +12,7 @@ function App() {
         Turn your light novels into audiobooks.
       </p>
 
-      <button>
-        Upload PDF
-      </button>
+      <UploadBook />
     </main>
   );
 }
