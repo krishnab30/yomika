@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from arq import create_pool
 
+from backend.app.database import AsyncSessionLocal
+from backend.app.models import Book
 from backend.app.worker import REDIS_SETTINGS
 
 
@@ -25,6 +27,10 @@ async def enqueue_book(
             "Only PDF files are supported."
         )
 
+    # --------------------------------------------------------------
+    # Create book ID and storage directory
+    # --------------------------------------------------------------
+
     book_id = str(uuid4())
 
     book_directory = (
@@ -38,6 +44,10 @@ async def enqueue_book(
         exist_ok=True,
     )
 
+    # --------------------------------------------------------------
+    # Copy original PDF into book storage
+    # --------------------------------------------------------------
+
     pdf_path = (
         book_directory
         / "original.pdf"
@@ -47,6 +57,34 @@ async def enqueue_book(
         source_pdf,
         pdf_path,
     )
+
+    # --------------------------------------------------------------
+    # Create persistent Book record BEFORE queueing the job
+    #
+    # This is important because the worker and API both use this
+    # database record as the source of truth for the job.
+    # --------------------------------------------------------------
+
+    async with AsyncSessionLocal() as session:
+        book = Book(
+            id=book_id,
+            title=source_pdf.stem,
+            original_filename=source_pdf.name,
+            original_path=str(pdf_path),
+            audiobook_path=None,
+            status="queued",
+            stage="queued",
+            progress=0,
+            message="Queued for processing",
+        )
+
+        session.add(book)
+
+        await session.commit()
+
+    # --------------------------------------------------------------
+    # Queue the background job
+    # --------------------------------------------------------------
 
     redis = await create_pool(
         REDIS_SETTINGS
@@ -79,6 +117,31 @@ async def enqueue_book(
         print(
             "Queued successfully."
         )
+
+    except Exception as exc:
+        # ----------------------------------------------------------
+        # If Redis enqueue fails after the DB record was created,
+        # keep the record but mark it as failed so the API does not
+        # show a permanently queued book.
+        # ----------------------------------------------------------
+
+        async with AsyncSessionLocal() as session:
+            db_book = await session.get(
+                Book,
+                book_id,
+            )
+
+            if db_book is not None:
+                db_book.status = "failed"
+                db_book.stage = "failed"
+                db_book.progress = 0
+                db_book.message = (
+                    f"Failed to queue job: {exc}"
+                )
+
+                await session.commit()
+
+        raise
 
     finally:
         await redis.aclose()

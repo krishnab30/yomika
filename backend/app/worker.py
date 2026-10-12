@@ -1,31 +1,25 @@
 from __future__ import annotations
 
-from sqlalchemy import select
-
-from backend.app.database import AsyncSessionLocal, close_db, init_db
-from backend.app.models import Book
-
 import asyncio
 import functools
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from arq import create_pool
 from arq.connections import RedisSettings
 from redis.asyncio import Redis
+from sqlalchemy import func, select
 
+from backend.app.database import AsyncSessionLocal, init_db
+from backend.app.models import Book, Chapter
 from backend.app.services.audiobook_pipeline import (
-    assemble_book,
     assemble_chapter,
     generate_chunk_audio,
     prepare_book,
 )
-from backend.app.services.job_status import (
-    JobStatusStore,
-)
-from backend.app.services.kokoro_tts import (
-    KokoroProvider,
-)
+from backend.app.services.job_status import JobStatusStore
+from backend.app.services.kokoro_tts import KokoroProvider
+from backend.app.services.manifest import write_manifest
 
 
 REDIS_SETTINGS = RedisSettings(
@@ -39,6 +33,7 @@ async def startup(ctx: dict) -> None:
     Initialize resources once for the worker process.
     """
     await init_db()
+
     executor = ThreadPoolExecutor(
         max_workers=1,
         thread_name_prefix="audiobook-worker",
@@ -70,6 +65,7 @@ async def startup(ctx: dict) -> None:
 
     print("Kokoro loaded.")
 
+
 async def update_book_record(
     book_id: str,
     *,
@@ -77,7 +73,6 @@ async def update_book_record(
     stage: str,
     progress: int,
     message: str,
-    audiobook_path: str | None = None,
 ) -> None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -96,17 +91,94 @@ async def update_book_record(
         book.progress = progress
         book.message = message
 
-        if audiobook_path is not None:
-            book.audiobook_path = (
-                audiobook_path
+        await session.commit()
+
+
+async def update_chapter_record(
+    *,
+    book_id: str,
+    title: str,
+    audio_path: str,
+    duration_seconds: float,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Chapter).where(
+                Chapter.book_id == book_id,
+                Chapter.title == title,
             )
+        )
+
+        chapter = result.scalar_one_or_none()
+
+        if chapter is None:
+            return
+
+        chapter.filename = (
+            Path(audio_path).name
+        )
+
+        chapter.audio_path = audio_path
+
+        chapter.duration_seconds = (
+            duration_seconds
+        )
+
+        chapter.status = "completed"
 
         await session.commit()
+
+
+async def pause_book_record(
+    book_id: str,
+    status_store: JobStatusStore,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Book).where(
+                Book.id == book_id
+            )
+        )
+
+        book = result.scalar_one_or_none()
+
+        if book is None:
+            return
+
+        book.status = "paused"
+        book.stage = "paused"
+        book.message = (
+            "Generation paused. Continue generation to resume."
+        )
+
+        await session.commit()
+
+    await status_store.update(
+        book_id,
+        status="paused",
+        stage="paused",
+        progress=book.progress,
+        message=(
+            "Generation paused. "
+            "Continue generation to resume."
+        ),
+    )
 
 async def shutdown(ctx: dict) -> None:
     """
     Release worker resources.
     """
+
+    active_book_id = ctx.get(
+        "active_book_id"
+    )
+
+    if active_book_id is not None:
+        await pause_book_record(
+            active_book_id,
+            ctx["status_store"],
+        )
+
     redis: Redis = ctx["status_redis"]
 
     await redis.aclose()
@@ -119,6 +191,46 @@ async def shutdown(ctx: dict) -> None:
         wait=True
     )
 
+async def create_chapter_records(
+    book_id: str,
+    chapters: list,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        existing_result = await session.execute(
+            select(Chapter).where(
+                Chapter.book_id == book_id
+            )
+        )
+
+        existing_chapters = (
+            existing_result.scalars().all()
+        )
+
+        for existing in existing_chapters:
+            await session.delete(existing)
+
+        for chapter in chapters:
+            session.add(
+                Chapter(
+                    book_id=book_id,
+                    chapter_number=chapter.number,
+                    title=chapter.title,
+                    status="pending",
+                )
+            )
+
+        book = await session.get(
+            Book,
+            book_id,
+        )
+
+        if book is not None:
+            book.chapter_count = len(
+                chapters
+            )
+
+        await session.commit()
+
 
 async def process_book(
     ctx: dict,
@@ -126,6 +238,7 @@ async def process_book(
     pdf_path: str,
     book_title: str,
     chapter_limit: int | None = None,
+    resume: bool = False,
 ) -> dict[str, object]:
     """
     Complete audiobook-generation job.
@@ -134,6 +247,61 @@ async def process_book(
         ctx["status_store"]
     )
 
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Book).where(
+                Book.id == book_id
+            )
+        )
+
+        book = result.scalar_one_or_none()
+
+        if book is None:
+            return {
+                "book_id": book_id,
+                "skipped": True,
+                "reason": "Book not found",
+            }
+
+        existing_completed_count = await session.scalar(
+            select(
+                func.count(Chapter.id)
+            ).where(
+                Chapter.book_id == book_id,
+                Chapter.status == "completed",
+            )
+        )
+
+        existing_completed_count = (
+            existing_completed_count or 0
+        )
+
+        if book.status == "paused":
+            return {
+                "book_id": book_id,
+                "skipped": True,
+                "reason": "Book is paused",
+            }
+
+        if (
+            not resume
+            and (
+                book.stage == "queued_resume"
+                or (
+                    book.status == "queued"
+                    and existing_completed_count > 0
+                )
+            )
+        ):
+            return {
+                "book_id": book_id,
+                "skipped": True,
+                "reason": (
+                    "Stale generation job"
+                ),
+            }
+
+    ctx["active_book_id"] = book_id
     executor: ThreadPoolExecutor = (
         ctx["executor"]
     )
@@ -147,6 +315,10 @@ async def process_book(
     ).parent
 
     try:
+        # --------------------------------------------------------------
+        # Extract and prepare the book
+        # --------------------------------------------------------------
+
         await status_store.update(
             book_id,
             status="processing",
@@ -156,12 +328,12 @@ async def process_book(
         )
 
         await update_book_record(
-        book_id,
-        status="processing",
-        stage="extracting",
-        progress=5,
-        message="Extracting PDF text",
-)
+            book_id,
+            status="processing",
+            stage="extracting",
+            progress=5,
+            message="Extracting PDF text",
+        )
 
         prepared = await loop.run_in_executor(
             executor,
@@ -173,8 +345,41 @@ async def process_book(
         chapters = prepared.chapters
         chunks = prepared.chunks
 
-        if chapter_limit is not None:
-            chapters = chapters[:chapter_limit]
+        if resume:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Chapter).where(
+                        Chapter.book_id == book_id
+                    )
+                )
+
+                existing_chapters = result.scalars().all()
+
+            pending_keys = {
+                (
+                    chapter.chapter_number,
+                    chapter.title,
+                )
+                for chapter in existing_chapters
+                if chapter.status == "pending"
+            }
+
+            chapters = [
+                chapter
+                for chapter in chapters
+                if (
+                    chapter.number,
+                    chapter.title,
+                ) in pending_keys
+            ]
+        else:
+            await create_chapter_records(
+                book_id,
+                chapters
+            )
+
+            if chapter_limit is not None:
+                chapters = chapters[:chapter_limit]
 
         await status_store.update(
             book_id,
@@ -187,19 +392,25 @@ async def process_book(
         )
 
         await update_book_record(
-        book_id,
-        status="processing",
-        stage="chunking",
-        progress=15,
-        message=(
-            f"Prepared {len(chapters)} chapters"
-        ),
-)
+            book_id,
+            status="processing",
+            stage="chunking",
+            progress=15,
+            message=(
+                f"Prepared {len(chapters)} chapters"
+            ),
+        )
+
+        # --------------------------------------------------------------
+        # Calculate total chunks
+        # --------------------------------------------------------------
 
         total_chunks = sum(
-            len(chunks[
-                chapter.display_title
-            ])
+            len(
+                chunks[
+                    chapter.display_title
+                ]
+            )
             for chapter in chapters
         )
 
@@ -207,28 +418,37 @@ async def process_book(
 
         chapter_audio = []
 
-        for chapter in chapters:
+        # --------------------------------------------------------------
+        # Generate one chapter at a time
+        # --------------------------------------------------------------
+
+        for chapter_position, chapter in enumerate(
+            chapters,
+            start=1,
+        ):
             chapter_chunks = chunks[
                 chapter.display_title
             ]
 
-            if chapter_limit is not None:
-                # Only process the requested chapter subset.
-                pass
-
             chunk_paths: list[Path] = []
 
             for chunk in chapter_chunks:
+                # ------------------------------------------------------
+                # Temporary chunk directory
+                # ------------------------------------------------------
+
+                chapter_directory_name = (
+                    (
+                        f"chapter_{chapter.number:02d}"
+                    )
+                    if chapter.number is not None
+                    else "extra_chapter"
+                )
+
                 chunk_directory = (
                     book_directory
-                    / "audio"
-                    / (
-                        f"chapter_"
-                        f"{chapter.number:02d}"
-                        if chapter.number
-                        is not None
-                        else "extra_chapter"
-                    )
+                    / "_work"
+                    / chapter_directory_name
                     / "chunks"
                 )
 
@@ -244,6 +464,10 @@ async def process_book(
                         f"{chunk.index:04d}.wav"
                     )
                 )
+
+                # ------------------------------------------------------
+                # Generate Kokoro audio
+                # ------------------------------------------------------
 
                 await loop.run_in_executor(
                     executor,
@@ -267,10 +491,23 @@ async def process_book(
                     + int(
                         (
                             completed_chunks
-                            / max(total_chunks, 1)
+                            / max(
+                                total_chunks,
+                                1,
+                            )
                         )
                         * 65
                     )
+                )
+
+                message = (
+                    f"Generating Chapter "
+                    f"{chapter_position}/"
+                    f"{len(chapters)}: "
+                    f"{chapter.title} "
+                    f"(chunk "
+                    f"{chunk.index}/"
+                    f"{len(chapter_chunks)})"
                 )
 
                 await status_store.update(
@@ -281,27 +518,23 @@ async def process_book(
                         generation_progress,
                         80,
                     ),
-                    message=(
-                        f"Generated chunk "
-                        f"{completed_chunks}/"
-                        f"{total_chunks}"
-                    ),
+                    message=message,
                 )
 
                 await update_book_record(
-                book_id,
-                status="processing",
-                stage="generating_audio",
-                progress=min(
+                    book_id,
+                    status="processing",
+                    stage="generating_audio",
+                    progress=min(
                         generation_progress,
                         80,
                     ),
-                message= (
-                        f"Generated chunk "
-                        f"{completed_chunks}/"
-                        f"{total_chunks}"
-                    ),
-            )
+                    message=message,
+                )
+
+            # ----------------------------------------------------------
+            # Assemble this chapter into its own M4A
+            # ----------------------------------------------------------
 
             chapter_result = (
                 await loop.run_in_executor(
@@ -309,7 +542,6 @@ async def process_book(
                     functools.partial(
                         assemble_chapter,
                         chapter=chapter,
-                        chunks=chapter_chunks,
                         chunk_paths=chunk_paths,
                         book_directory=book_directory,
                     ),
@@ -320,12 +552,31 @@ async def process_book(
                 chapter_result
             )
 
+            # ----------------------------------------------------------
+            # Save chapter metadata
+            # ----------------------------------------------------------
+
+            await update_chapter_record(
+                book_id=book_id,
+                title=chapter.title,
+                audio_path=str(
+                    chapter_result.m4a_path
+                ),
+                duration_seconds=(
+                    chapter_result.duration_seconds
+                ),
+            )
+
+        # --------------------------------------------------------------
+        # Write audiobook manifest
+        # --------------------------------------------------------------
+
         await status_store.update(
             book_id,
             status="processing",
             stage="assembling",
             progress=90,
-            message="Building M4B audiobook",
+            message="Writing audiobook manifest",
         )
 
         await update_book_record(
@@ -333,29 +584,89 @@ async def process_book(
             status="processing",
             stage="assembling",
             progress=90,
-            message="Building M4B audiobook",
+            message="Writing audiobook manifest",
         )
 
-        audiobook_path = (
+        manifest_path = (
+            book_directory
+            / "audiobook"
+            / "manifest.json"
+        )
+
+        if resume and manifest_path.exists():
+            with manifest_path.open(
+                "r",
+                encoding="utf-8",
+            ) as manifest_file:
+                manifest = json.load(manifest_file)
+
+            existing_chapters = {
+                (
+                    chapter["number"],
+                    chapter["title"],
+                ): chapter
+                for chapter in manifest.get(
+                    "chapters",
+                    [],
+                )
+            }
+
+            for chapter in chapter_audio:
+                key = (
+                    chapter["number"],
+                    chapter["title"],
+                )
+
+                existing_chapters[key] = chapter
+
+            manifest["title"] = book_title
+
+            manifest["chapters"] = sorted(
+                existing_chapters.values(),
+                key=lambda chapter: (
+                    chapter["number"] is None,
+                    (
+                        chapter["number"]
+                        if chapter["number"] is not None
+                        else float("inf")
+                    ),
+                    chapter["title"],
+                ),
+            )
+
+            with manifest_path.open(
+                "w",
+                encoding="utf-8",
+            ) as manifest_file:
+                json.dump(
+                    manifest,
+                    manifest_file,
+                    indent=2,
+                )
+        else:
             await loop.run_in_executor(
                 executor,
                 functools.partial(
-                    assemble_book,
-                    chapters=chapter_audio,
-                    book_directory=book_directory,
+                    write_manifest,
+                    output_directory=(
+                        book_directory
+                        / "audiobook"
+                    ),
                     book_title=book_title,
+                    chapters=chapter_audio,
                 ),
             )
-        )
+
+        # --------------------------------------------------------------
+        # Mark completed
+        # --------------------------------------------------------------
 
         await status_store.update(
             book_id,
             status="completed",
             stage="completed",
             progress=100,
-            message=str(
-                audiobook_path
-            ),
+            message=("Audiobook chapters generated"),
         )
 
         await update_book_record(
@@ -363,20 +674,40 @@ async def process_book(
             status="completed",
             stage="completed",
             progress=100,
-            message=str(audiobook_path),
-            audiobook_path=str(audiobook_path),
+            message=("Audiobook chapters generated"),
+        )
+
+        ctx.pop(
+            "active_book_id",
+            None
         )
 
         return {
             "book_id": book_id,
-            "audiobook_path": str(
-                audiobook_path
+            "manifest_path": str(
+                manifest_path
             ),
             "chapter_count": len(
                 chapters
             ),
             "chunk_count": total_chunks,
         }
+
+
+    except asyncio.CancelledError:
+        await asyncio.shield(
+            pause_book_record(
+                book_id,
+                status_store,
+            )
+        )
+
+        ctx.pop(
+            "active_book_id",
+            None,
+        )
+
+        raise
 
     except Exception as exc:
         await status_store.update(
@@ -393,6 +724,11 @@ async def process_book(
             stage="failed",
             progress=0,
             message=str(exc),
+        )
+
+        ctx.pop(
+            "active_book_id",
+            None
         )
 
         raise
@@ -415,5 +751,7 @@ class WorkerSettings:
     # Do not automatically regenerate an expensive audiobook
     # five times after a failure.
     max_tries = 1
+
+    retry_jobs = False
 
     keep_result = 60 * 60

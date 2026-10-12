@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useState,
 } from "react";
 
@@ -8,49 +9,104 @@ import Header from "./components/Header";
 import UploadBook from "./components/UploadBook";
 import BookProcessing from "./components/BookProcessing";
 import BookLibrary from "./components/BookLibrary";
-import type { Book } from "./api/books";
 import AudioPlayer from "./components/AudioPlayer";
+import {
+  continueBook,
+  type Book,
+  type Chapter,
+} from "./api/books";
+
+interface SelectedChapter {
+  book: Book;
+  chapter: Chapter;
+  chapters: Chapter[];
+  autoPlay: boolean;
+}
 
 function App() {
-  const [bookId, setBookId] =
-    useState<string | null>(null);
-
-  const [isProcessing, setIsProcessing] =
-    useState(false);
-
-  const [libraryRefreshKey, setLibraryRefreshKey] =
-    useState(0);
-
-  const [selectedBook, setSelectedBook] =
-  useState<Book | null>(null);
-
-  const handlePlayBook = (
-  book: Book,
-  ) => {
-  setSelectedBook(book);
-  };
+  const [bookId, setBookId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
+  const [activeGenerationIds, setActiveGenerationIds] =
+    useState<string[]>([]);
+  const [selectedChapter, setSelectedChapter] =
+    useState<SelectedChapter | null>(null);
 
   const handleClosePlayer = () => {
-  setSelectedBook(null);
+    setSelectedChapter(null);
   };
 
-  const handleUploadSuccess = (
-    uploadedBookId: string,
+  const handlePlayChapter = (
+    book: Book,
+    chapter: Chapter,
+    chapters: Chapter[],
+    autoPlay = false,
   ) => {
+    setSelectedChapter({ book, chapter, chapters, autoPlay });
+  };
+
+  const activateGeneration = useCallback(
+    (bookId: string) => {
+      setActiveGenerationIds((currentIds) => {
+        if (currentIds.includes(bookId)) {
+          return currentIds;
+        }
+
+        return [...currentIds, bookId];
+      });
+    },
+    [],
+  );
+
+  const deactivateGeneration = useCallback(
+    (bookId: string) => {
+      setActiveGenerationIds((currentIds) =>
+        currentIds.filter(
+          (currentId) => currentId !== bookId,
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleUploadSuccess = (uploadedBookId: string) => {
     setBookId(uploadedBookId);
     setIsProcessing(true);
 
-    setLibraryRefreshKey(
-      (current) => current + 1,
-    );
+    activateGeneration(uploadedBookId);
+
+    setLibraryRefreshKey((current) => current + 1);
   };
 
   const handleProcessingComplete = () => {
     setIsProcessing(false);
 
-    setLibraryRefreshKey(
-      (current) => current + 1,
-    );
+    if (bookId) {
+      deactivateGeneration(bookId);
+    }
+
+    setLibraryRefreshKey((current) => current + 1);
+  };
+
+  const handleContinueGeneration = async (
+    book: Book,
+  ) => {
+    try {
+      await continueBook(book.id);
+
+      activateGeneration(book.id);
+
+      setLibraryRefreshKey(
+        (current) => current + 1,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to continue generation.";
+
+      window.alert(message);
+    }
   };
 
   return (
@@ -63,34 +119,45 @@ function App() {
 
       {!isProcessing && (
         <UploadBook
-          onUploadSuccess={
-            handleUploadSuccess
-          }
+          onUploadSuccess={handleUploadSuccess}
         />
       )}
 
       {bookId && isProcessing && (
         <BookProcessing
           bookId={bookId}
-          onComplete={
-            handleProcessingComplete
-          }
+          onComplete={handleProcessingComplete}
         />
       )}
 
       <BookLibrary
         refreshKey={libraryRefreshKey}
-        onPlayBook={handlePlayBook}
+        activeGenerationIds={activeGenerationIds}
+        onGenerationFinished={deactivateGeneration}
+        onPlayChapter={handlePlayChapter}
+        onContinueGeneration={
+          handleContinueGeneration
+        }
       />
 
-      {selectedBook && (
-      <AudioPlayer
-        key={selectedBook.id}
-        bookId={selectedBook.id}
-        title={selectedBook.title}
-        onClose={handleClosePlayer}
-      />
-    )}
+      {selectedChapter && (
+        <AudioPlayer
+          key={`${selectedChapter.book.id}-${selectedChapter.chapter.id}`}
+          bookId={selectedChapter.book.id}
+          chapterId={selectedChapter.chapter.id}
+          title={`${selectedChapter.book.title} — ${selectedChapter.chapter.title}`}
+          chapters={selectedChapter.chapters}
+          onSelectChapter={(chapter, autoPlay = false) => {
+            setSelectedChapter({
+              ...selectedChapter,
+              chapter,
+              autoPlay,
+            });
+          }}
+          autoPlay={selectedChapter.autoPlay}
+          onClose={handleClosePlayer}
+        />
+      )}
     </main>
   );
 }

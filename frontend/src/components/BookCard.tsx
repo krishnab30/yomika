@@ -1,11 +1,20 @@
+
 import type { Book } from "../api/books";
 
 interface BookCardProps {
   book: Book;
-  onPlay: (book: Book) => void;
+  onViewChapters: (book: Book) => void;
+  onContinueGeneration: (book: Book) => void;
 }
 
 function getStatusLabel(book: Book): string {
+  if (
+    book.chapter_count > 0 &&
+    book.pending_chapter_count > 0
+  ) {
+    return "Partially generated";
+  }
+
   switch (book.status) {
     case "queued":
       return "Queued";
@@ -26,19 +35,17 @@ function getStatusLabel(book: Book): string {
 
 function BookCard({
   book,
-  onPlay,
+  onViewChapters,
+  onContinueGeneration,
 }: BookCardProps) {
-  const createdDate =
-    new Date(book.created_at);
+  const createdDate = new Date(book.created_at);
 
   return (
     <article className="book-card">
       <div className="book-card-header">
         <h3>{book.title}</h3>
 
-        <span
-          className={`status status-${book.status}`}
-        >
+        <span className={`status status-${book.status}`}>
           {getStatusLabel(book)}
         </span>
       </div>
@@ -48,37 +55,61 @@ function BookCard({
       </p>
 
       <p className="book-date">
-        Added{" "}
-        {createdDate.toLocaleDateString()}
+        Added {createdDate.toLocaleDateString()}
       </p>
+
+      {book.chapter_count > 0 ? (
+        <p className="book-chapter-summary">
+          {book.completed_chapter_count} of{" "}
+          {book.chapter_count} chapters ready
+        </p>
+      ) : (
+        <p className="book-chapter-summary">
+          Preparing chapters...
+        </p>
+      )}
+      
+      {book.pending_chapter_count > 0 && (
+        <p className="book-chapter-pending">
+          {book.pending_chapter_count} chapters pending
+        </p>
+      )}
+
+      {book.pending_chapter_count > 0 && (
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() =>
+            onContinueGeneration(book)
+          }
+        >
+          Continue generation
+        </button>
+      )}
 
       {book.status === "processing" && (
         <div className="book-progress">
-          <progress
-            value={book.progress}
-            max={100}
-          />
-
-          <span>
-            {book.progress}%
-          </span>
+          <progress value={book.progress} max={100} />
+          <span>{book.progress}%</span>
         </div>
       )}
 
-    {book.status === "completed" && (
-    <div className="book-actions">
-        <p className="ready-message">
-        Audiobook ready to play.
-        </p>
+      {book.chapter_count > 0 &&
+        book.pending_chapter_count === 0 && (
+          <div className="book-actions">
+            <p className="ready-message">
+              Audiobook ready. View the chapters to listen.
+            </p>
 
-        <button
-        type="button"
-        onClick={() => onPlay(book)}
-        >
-        Play audiobook
-        </button>
-    </div>
-    )}
+            <button
+              type="button"
+              onClick={() => onViewChapters(book)}
+            >
+              View chapters
+            </button>
+          </div>
+        )}
+
       {book.status === "failed" && (
         <p className="error-message">
           {book.message}

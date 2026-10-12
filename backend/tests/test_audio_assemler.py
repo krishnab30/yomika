@@ -105,6 +105,7 @@ def test_create_m4b(
     )
 
     chapter_one = ChapterAudio(
+        number = 1,
         title="Chapter 1: Test",
         wav_path=wav_one,
         m4a_path=m4a_one,
@@ -112,6 +113,7 @@ def test_create_m4b(
     )
 
     chapter_two = ChapterAudio(
+        number = 2,
         title="Chapter 2: Test",
         wav_path=wav_two,
         m4a_path=m4a_two,

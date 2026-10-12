@@ -5,7 +5,6 @@ from pathlib import Path
 
 from backend.app.services.audio_assembler import (
     ChapterAudio,
-    assemble_m4b,
     concatenate_wav_files,
     encode_m4a,
     get_audio_duration,
@@ -28,6 +27,9 @@ from backend.app.services.tts_provider import (
     TTSProvider,
 )
 
+from backend.app.services.file_naming import (
+    chapter_filename,
+)
 
 @dataclass(frozen=True)
 class PreparedBook:
@@ -100,34 +102,40 @@ def generate_chunk_audio(
 
 def assemble_chapter(
     *,
-    chapter: Chapter,
-    chunks: list[TextChunk],
+    chapter,
     chunk_paths: list[Path],
     book_directory: Path,
 ) -> ChapterAudio:
     """
-    Combine TTS chunks into a chapter and encode it.
+    Combine one chapter's TTS chunks into a single M4A.
+    Intermediate WAV files are removed after successful encoding.
     """
-    chapter_number = (
-        chapter.number
-        if chapter.number is not None
-        else 999
+    audiobook_directory = (
+        book_directory / "audiobook"
     )
 
-    chapter_directory = (
+    audiobook_directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    work_directory = (
         book_directory
-        / "audio"
-        / f"chapter_{chapter_number:02d}"
+        / "_work"
+        / (
+            f"chapter_{chapter.number:02d}"
+            if chapter.number is not None
+            else "extra_chapter"
+        )
     )
 
-    chapter_directory.mkdir(
+    work_directory.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     chapter_wav = (
-        chapter_directory
-        / "chapter.wav"
+        work_directory / "chapter.wav"
     )
 
     concatenate_wav_files(
@@ -135,9 +143,13 @@ def assemble_chapter(
         output_path=chapter_wav,
     )
 
+    filename = chapter_filename(
+        number=chapter.number,
+        title=chapter.title,
+    )
+
     chapter_m4a = (
-        chapter_directory
-        / "chapter.m4a"
+        audiobook_directory / filename
     )
 
     encode_m4a(
@@ -146,10 +158,22 @@ def assemble_chapter(
     )
 
     duration = get_audio_duration(
-        chapter_wav
+        chapter_wav,
     )
 
+    # The M4A is our durable artifact.
+    # WAV is only an intermediate.
+    chapter_wav.unlink(
+        missing_ok=True
+    )
+
+    for chunk_path in chunk_paths:
+        chunk_path.unlink(
+            missing_ok=True
+        )
+
     return ChapterAudio(
+        number=chapter.number,
         title=chapter.display_title,
         wav_path=chapter_wav,
         m4a_path=chapter_m4a,
@@ -157,22 +181,23 @@ def assemble_chapter(
     )
 
 
-def assemble_book(
-    *,
-    chapters: list[ChapterAudio],
-    book_directory: Path,
-    book_title: str,
-) -> Path:
-    """
-    Build the final M4B audiobook.
-    """
-    output_path = (
-        book_directory
-        / "audiobook.m4b"
-    )
+# deprecated, delete later
+# def assemble_book(
+#     *,
+#     chapters: list[ChapterAudio],
+#     book_directory: Path,
+#     book_title: str,
+# ) -> Path:
+#     """
+#     Build the final M4B audiobook.
+#     """
+#     output_path = (
+#         book_directory
+#         / "audiobook.m4b"
+#     )
 
-    return assemble_m4b(
-        chapters=chapters,
-        output_path=output_path,
-        book_title=book_title,
-    )
+#     return assemble_m4b(
+#         chapters=chapters,
+#         output_path=output_path,
+#         book_title=book_title,
+#     )

@@ -4,7 +4,7 @@ from backend.app.services.chapter_parser import parse_chapters
 from backend.app.services.text_chunker import chunk_chapters
 
 
-NORMALIZED_PATH = Path("/Users/krishna/Projects/audiobook-ai/storage/books/c86d5ff9-7099-4fad-8b4c-a115c6865e0b/normalized.txt")
+NORMALIZED_PATH = Path("/Users/krishna/Projects/audiobook-ai/storage/books/0c1ce0f1-3eb4-455f-906a-f054f9c23b74/normalized.txt")
 
 
 def test_real_book_structure() -> None:

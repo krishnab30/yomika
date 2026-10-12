@@ -1,3 +1,4 @@
+
 export interface BookCreatedResponse {
   book_id: string;
   title: string;
@@ -21,10 +22,21 @@ export interface Book {
   stage: string;
   progress: number;
   message: string;
+  chapter_count: number;
+  completed_chapter_count: number;
+  pending_chapter_count: number;
   created_at: string;
   updated_at: string;
 }
 
+export interface Chapter {
+  id: number;
+  chapter_number: number | null;
+  title: string;
+  filename: string | null;
+  duration_seconds: number | null;
+  status: string;
+}
 
 export async function uploadBook(
   file: File,
@@ -46,7 +58,6 @@ export async function uploadBook(
 
   return response.json();
 }
-
 
 export async function getBookStatus(
   bookId: string,
@@ -76,8 +87,55 @@ export async function getBooks(): Promise<Book[]> {
   return response.json();
 }
 
+export async function getChapters(
+  bookId: string,
+): Promise<Chapter[]> {
+  const response = await fetch(
+    `/api/books/${bookId}/chapters`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch chapters: ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
+export function getChapterAudioUrl(
+  bookId: string,
+  chapterId: number,
+): string {
+  return `/api/books/${bookId}/chapters/${chapterId}/audio`;
+}
+
+// Kept temporarily for the existing player.
+// We'll remove this when the frontend switches to chapter playback.
 export function getBookAudioUrl(
   bookId: string,
 ): string {
   return `/api/books/${bookId}/audio`;
+}
+
+export async function continueBook(
+  bookId: string,
+): Promise<BookCreatedResponse> {
+  const response = await fetch(
+    `/api/books/${bookId}/continue`,
+    {
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+
+    throw new Error(
+      errorBody?.detail ??
+        "Unable to continue audiobook generation.",
+    );
+  }
+
+  return response.json();
 }

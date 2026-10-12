@@ -20,6 +20,7 @@ class AudioAssemblyError(Exception):
 
 @dataclass(frozen=True)
 class ChapterAudio:
+    number: int | None
     title: str
     wav_path: Path
     m4a_path: Path

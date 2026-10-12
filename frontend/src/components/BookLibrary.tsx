@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useState,
 } from "react";
@@ -6,35 +7,54 @@ import {
 import {
   getBooks,
   type Book,
+  type Chapter,
 } from "../api/books";
 
 import BookCard from "./BookCard";
+import ChapterList from "./ChapterList";
 
 interface BookLibraryProps {
   refreshKey: number;
-  onPlayBook: (book: Book) => void;
+  activeGenerationIds: string[];
+  onGenerationFinished: (bookId: string) => void;
+  onPlayChapter: (
+    book: Book,
+    chapter: Chapter,
+    chapters: Chapter[],
+  ) => void;
+  onContinueGeneration: (book: Book) => void;
 }
 
 function BookLibrary({
   refreshKey,
-  onPlayBook,
+  activeGenerationIds,
+  onGenerationFinished,
+  onPlayChapter,
+  onContinueGeneration,
 }: BookLibraryProps) {
-  const [books, setBooks] =
-    useState<Book[]>([]);
+  const [books, setBooks] = useState<Book[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedBook, setSelectedBook] = useState<Book | null>(null);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
 
-  const [isLoading, setIsLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState<string | null>(null);
+  const handleChaptersLoaded = useCallback(
+    (loadedChapters: Chapter[]) => {
+      setChapters(loadedChapters);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
+    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const loadBooks = async () => {
+    const loadBooks = async (showLoading: boolean) => {
       try {
-        setIsLoading(true);
-        setError(null);
+        if (showLoading) {
+          setIsLoading(true);
+          setError(null);
+        }
 
         const result = await getBooks();
 
@@ -43,6 +63,48 @@ function BookLibrary({
         }
 
         setBooks(result);
+
+        setSelectedBook((currentBook) => {
+          if (!currentBook) {
+            return null;
+          }
+
+          return (
+            result.find(
+              (book) => book.id === currentBook.id,
+            ) ?? null
+          );
+        });
+
+        const activeIds = new Set(
+          activeGenerationIds,
+        );
+
+        const activeBooks = result.filter(
+          (book) => activeIds.has(book.id),
+        );
+
+        const stillActive = activeBooks.filter(
+          (book) =>
+            book.status === "queued" ||
+            book.status === "processing",
+        );
+
+        const finishedBooks = activeBooks.filter(
+          (book) =>
+            book.status !== "queued" &&
+            book.status !== "processing",
+        );
+
+        for (const book of finishedBooks) {
+          onGenerationFinished(book.id);
+        }
+
+        if (stillActive.length > 0) {
+          pollTimeout = setTimeout(() => {
+            void loadBooks(false);
+          }, 2000);
+        }
       } catch (loadError) {
         if (cancelled) {
           return;
@@ -54,19 +116,41 @@ function BookLibrary({
             : "Failed to load books.";
 
         setError(message);
+
+        for (const bookId of activeGenerationIds) {
+          onGenerationFinished(bookId);
+        }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && showLoading) {
           setIsLoading(false);
         }
       }
     };
 
-    loadBooks();
+    void loadBooks(true);
 
     return () => {
       cancelled = true;
+
+      if (pollTimeout !== null) {
+        clearTimeout(pollTimeout);
+      }
     };
-  }, [refreshKey]);
+  }, [
+    refreshKey,
+    activeGenerationIds,
+    onGenerationFinished,
+  ]);
+
+  const handleViewChapters = (book: Book) => {
+    setSelectedBook(book);
+    setChapters([]);
+  };
+
+  const handleCloseChapters = () => {
+    setSelectedBook(null);
+    setChapters([]);
+  };
 
   return (
     <section className="library">
@@ -74,16 +158,11 @@ function BookLibrary({
         <h2>Your Library</h2>
 
         <span>
-          {books.length}{" "}
-          {books.length === 1
-            ? "book"
-            : "books"}
+          {books.length} {books.length === 1 ? "book" : "books"}
         </span>
       </div>
 
-      {isLoading && (
-        <p>Loading your library...</p>
-      )}
+      {isLoading && <p>Loading your library...</p>}
 
       {error && (
         <p className="error-message">
@@ -91,28 +170,47 @@ function BookLibrary({
         </p>
       )}
 
-      {!isLoading &&
-        !error &&
-        books.length === 0 && (
-          <p>
-            Your library is empty. Upload a
-            PDF to get started.
-          </p>
-        )}
+      {!isLoading && !error && books.length === 0 && (
+        <p>
+          Your library is empty. Upload a PDF to get started.
+        </p>
+      )}
 
-      {!isLoading &&
-        !error &&
-        books.length > 0 && (
-          <div className="book-grid">
-            {books.map((book) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                onPlay={onPlayBook}
-              />
-            ))}
+      {!isLoading && !error && books.length > 0 && (
+        <div className="book-grid">
+          {books.map((book) => (
+            <BookCard
+              key={book.id}
+              book={book}
+              onViewChapters={handleViewChapters}
+              onContinueGeneration={onContinueGeneration}
+            />
+          ))}
+        </div>
+      )}
+
+      {selectedBook && (
+        <section className="chapter-panel">
+          <div className="chapter-panel-header">
+            <h2>{selectedBook.title}</h2>
+
+            <button
+              type="button"
+              onClick={handleCloseChapters}
+            >
+              Close chapters
+            </button>
           </div>
-        )}
+
+          <ChapterList
+            bookId={selectedBook.id}
+            onChaptersLoaded={handleChaptersLoaded}
+            onPlayChapter={(chapter) => {
+              onPlayChapter(selectedBook, chapter, chapters);
+            }}
+          />
+        </section>
+      )}
     </section>
   );
 }
