@@ -23,6 +23,7 @@ interface BookLibraryProps {
     chapters: Chapter[],
   ) => void;
   onContinueGeneration: (book: Book) => void;
+  onDeleteBook: (book: Book) => void;
 }
 
 function BookLibrary({
@@ -31,6 +32,7 @@ function BookLibrary({
   onGenerationFinished,
   onPlayChapter,
   onContinueGeneration,
+  onDeleteBook,
 }: BookLibraryProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -184,6 +186,7 @@ function BookLibrary({
               book={book}
               onViewChapters={handleViewChapters}
               onContinueGeneration={onContinueGeneration}
+              onDeleteBook={onDeleteBook}
             />
           ))}
         </div>

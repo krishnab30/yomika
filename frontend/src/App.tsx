@@ -14,6 +14,7 @@ import {
   continueBook,
   type Book,
   type Chapter,
+  deleteBook,
 } from "./api/books";
 
 interface SelectedChapter {
@@ -109,6 +110,42 @@ function App() {
     }
   };
 
+  const handleDeleteBook = async (book: Book) => {
+  const confirmed = window.confirm(
+    `Delete "${book.title}" and all its generated audio files? This action cannot be undone.`,
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const result = await deleteBook(book.id);
+
+    // Stop tracking the book as an active generation.
+    deactivateGeneration(book.id);
+
+    // Close the player if it belongs to this book.
+    setSelectedChapter((current) =>
+      current?.book.id === book.id ? null : current,
+    );
+
+    // Refresh the library from the backend.
+    setLibraryRefreshKey((current) => current + 1);
+
+    if (!result.files_removed) {
+      window.alert(result.message);
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to delete book.";
+
+    window.alert(message);
+    }
+  };
+
   return (
     <main>
       <Header />
@@ -138,6 +175,7 @@ function App() {
         onContinueGeneration={
           handleContinueGeneration
         }
+        onDeleteBook={handleDeleteBook}
       />
 
       {selectedChapter && (

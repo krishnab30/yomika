@@ -5,38 +5,68 @@ interface BookCardProps {
   book: Book;
   onViewChapters: (book: Book) => void;
   onContinueGeneration: (book: Book) => void;
+  onDeleteBook: (book: Book) => void;
+}
+
+
+function isAudiobookReady(book: Book): boolean {
+  return (
+    book.chapter_count > 0 &&
+    book.completed_chapter_count === book.chapter_count
+  );
+}
+
+function canContinueGeneration(book: Book): boolean {
+  return (
+    book.pending_chapter_count > 0 &&
+    ["paused", "completed", "failed"].includes(book.status)
+  );
 }
 
 function getStatusLabel(book: Book): string {
-  if (
-    book.chapter_count > 0 &&
-    book.pending_chapter_count > 0
-  ) {
-    return "Partially generated";
-  }
-
   switch (book.status) {
     case "queued":
-      return "Queued";
+      return book.stage === "queued_resume"
+        ? "Queued to resume"
+        : "Queued";
 
-    case "processing":
-      return book.stage;
+    case "processing": {
+      const stageLabels: Record<string, string> = {
+        extracting: "Extracting text",
+        chunking: "Preparing chapters",
+        generating_audio: "Generating audio",
+        assembling: "Finalizing audiobook",
+      };
 
-    case "completed":
-      return "Audiobook ready";
+      return stageLabels[book.stage] ?? book.stage;
+    }
+
+    case "paused":
+      return "Paused";
 
     case "failed":
       return "Processing failed";
+
+    case "completed":
+      if (isAudiobookReady(book)) {
+        return "Audiobook ready";
+      }
+
+      return book.chapter_count > 0
+        ? "Partially generated"
+        : "Preparing chapters";
 
     default:
       return book.status;
   }
 }
 
+
 function BookCard({
   book,
   onViewChapters,
   onContinueGeneration,
+  onDeleteBook,
 }: BookCardProps) {
   const createdDate = new Date(book.created_at);
 
@@ -75,7 +105,7 @@ function BookCard({
         </p>
       )}
 
-      {book.pending_chapter_count > 0 && (
+      {canContinueGeneration(book) && (
         <button
           type="button"
           className="button-secondary"
@@ -94,8 +124,7 @@ function BookCard({
         </div>
       )}
 
-      {book.chapter_count > 0 &&
-        book.pending_chapter_count === 0 && (
+      {isAudiobookReady(book) && (
           <div className="book-actions">
             <p className="ready-message">
               Audiobook ready. View the chapters to listen.
@@ -115,6 +144,16 @@ function BookCard({
           {book.message}
         </p>
       )}
+      
+      <div className="book-delete-action">
+      <button
+        type="button"
+        className="button-secondary"
+        onClick={() => onDeleteBook(book)}
+      >
+        Delete book
+      </button>
+    </div>
     </article>
   );
 }

@@ -139,3 +139,29 @@ export async function continueBook(
 
   return response.json();
 }
+
+
+export async function deleteBook(
+  bookId: string,
+): Promise<{
+  book_id: string;
+  message: string;
+  files_removed: boolean;
+}> {
+  const response = await fetch(
+    `/api/books/${bookId}`,
+    {
+      method: "DELETE",
+    },
+  );
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+
+    throw new Error(
+      errorBody?.detail ?? "Unable to delete book.",
+    );
+  }
+
+  return response.json();
+}

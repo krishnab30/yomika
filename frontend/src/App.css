@@ -195,6 +195,12 @@ progress {
   margin-bottom: 12px;
 }
 
+.book-delete-action {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
 .chapter-status {
   display: inline-block;
   padding: 0.2rem 0.5rem;
