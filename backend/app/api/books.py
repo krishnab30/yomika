@@ -36,6 +36,11 @@ from backend.app.schemas import (
 )
 from backend.app.services.job_status import JobStatusStore
 from backend.app.services.voice_catalog import SUPPORTED_VOICES
+from backend.app.services.audio_assembler import (
+    AudioAssemblyError,
+    M4BChapter,
+    assemble_m4b,
+)
 
 router = APIRouter(
     prefix="/books",
@@ -788,6 +793,152 @@ async def download_chapters(
             temp_directory,
             ignore_errors=True,
         ),
+    )
+
+
+@router.get("/{book_id}/download-m4b")
+async def download_m4b(
+    book_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    # Verify the book exists.
+    result = await db.execute(
+        select(Book).where(Book.id == book_id)
+    )
+    book = result.scalar_one_or_none()
+
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Book not found.",
+        )
+
+    # Fetch every chapter in reading order.
+    result = await db.execute(
+        select(Chapter)
+        .where(Chapter.book_id == book_id)
+        .order_by(
+            Chapter.chapter_number.is_(None),
+            Chapter.chapter_number,
+            Chapter.id,
+        )
+    )
+    chapters = result.scalars().all()
+
+    if not chapters:
+        raise HTTPException(
+            status_code=409,
+            detail="This book has no chapters to export.",
+        )
+
+    # A full audiobook requires every chapter to be ready.
+    if any(
+        chapter.status != "completed"
+        for chapter in chapters
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The full audiobook can be exported "
+                "once every chapter has completed."
+            ),
+        )
+
+    m4b_chapters: list[M4BChapter] = []
+    source_paths: list[Path] = []
+
+    for chapter in chapters:
+        if (
+            not chapter.audio_path
+            or chapter.duration_seconds is None
+            or chapter.duration_seconds <= 0
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Audio metadata is incomplete for "
+                    f"chapter '{chapter.title}'."
+                ),
+            )
+
+        audio_path = Path(chapter.audio_path)
+
+        if not audio_path.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Audio file is missing for "
+                    f"chapter '{chapter.title}'."
+                ),
+            )
+
+        source_paths.append(audio_path)
+
+        m4b_chapters.append(
+            M4BChapter(
+                number=chapter.chapter_number,
+                title=chapter.title,
+                m4a_path=audio_path,
+                duration_seconds=chapter.duration_seconds,
+            )
+        )
+
+    # Keep the export alongside the existing audiobook files,
+    # in a separate directory from the chapter M4A files.
+    book_directory = Path(book.original_path).parent
+    export_directory = (
+        book_directory / "audiobook" / "exports"
+    )
+    output_path = (
+        export_directory / "full_audiobook.m4b"
+    )
+
+    export_directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    # Reuse the cached export if none of its sources changed.
+    latest_source_mtime = max(
+        path.stat().st_mtime
+        for path in source_paths
+    )
+
+    export_is_current = (
+        output_path.is_file()
+        and output_path.stat().st_mtime
+        >= latest_source_mtime
+    )
+
+    if not export_is_current:
+        try:
+            await run_in_threadpool(
+                assemble_m4b,
+                m4b_chapters,
+                output_path,
+                book.title,
+            )
+        except Exception:
+            output_path.unlink(missing_ok=True)
+            logger.exception(
+                "Failed to assemble M4B for book %s",
+                book_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to assemble the M4B audiobook.",
+            ) from None
+
+    safe_title = re.sub(
+        r"[^\w.-]+",
+        "_",
+        book.title,
+    ).strip("._") or book.id
+
+    return FileResponse(
+        path=output_path,
+        media_type="audio/mp4",
+        filename=f"{safe_title}.m4b",
     )
 
 

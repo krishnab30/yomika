@@ -136,6 +136,12 @@ export function getChapterArchiveUrl(
   return `/api/books/${bookId}/download-chapters`;
 }
 
+export function getM4BDownloadUrl(
+  bookId: string,
+): string {
+  return `/api/books/${bookId}/download-m4b`;
+}
+
 // Kept temporarily for the existing player.
 // We'll remove this when the frontend switches to chapter playback.
 export function getBookAudioUrl(

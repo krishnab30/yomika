@@ -26,6 +26,12 @@ class ChapterAudio:
     m4a_path: Path
     duration_seconds: float
 
+@dataclass(frozen=True)
+class M4BChapter:
+    number: int | None
+    title: str
+    m4a_path: Path
+    duration_seconds: float
 
 def _require_binary(binary: str) -> str:
     path = shutil.which(binary)
@@ -242,7 +248,7 @@ def _escape_ffmetadata(value: str) -> str:
 def create_ffmetadata(
     output_path: Path,
     book_title: str,
-    chapters: list[ChapterAudio],
+    chapters: list[ChapterAudio | M4BChapter],
     author: str | None = None,
 ) -> Path:
     """
@@ -333,7 +339,7 @@ def create_concat_file(
 
 
 def assemble_m4b(
-    chapters: list[ChapterAudio],
+    chapters: list[ChapterAudio | M4BChapter],
     output_path: Path,
     book_title: str,
     author: str | None = None,
