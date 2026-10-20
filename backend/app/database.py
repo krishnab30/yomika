@@ -53,6 +53,25 @@ async def init_db() -> None:
             Base.metadata.create_all
         )
 
+        # Add the voice column to databases created
+        # before narration voice selection existed.
+        result = await connection.exec_driver_sql(
+            "PRAGMA table_info(books)"
+        )
+
+        columns = {
+            row[1]
+            for row in result.fetchall()
+        }
+
+        if "voice" not in columns:
+            await connection.exec_driver_sql(
+                """
+                ALTER TABLE books
+                ADD COLUMN voice VARCHAR(50)
+                NOT NULL DEFAULT 'af_heart'
+                """
+            )
 
 async def close_db() -> None:
     await engine.dispose()

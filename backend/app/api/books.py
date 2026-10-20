@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import logging
+import shutil
+import re
+import tempfile
+import zipfile
+
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
+
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,13 +16,14 @@ from arq import ArqRedis
 from fastapi import (
     APIRouter,
     Depends,
+    Form,
     File,
     HTTPException,
     Request,
     UploadFile,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import get_db
@@ -25,13 +35,14 @@ from backend.app.schemas import (
     ChapterResponse,
 )
 from backend.app.services.job_status import JobStatusStore
-
+from backend.app.services.voice_catalog import SUPPORTED_VOICES
 
 router = APIRouter(
     prefix="/books",
     tags=["books"],
 )
 
+logger = logging.getLogger(__name__)
 
 STORAGE_ROOT = Path(
     "storage/books"
@@ -45,8 +56,29 @@ STORAGE_ROOT = Path(
 async def upload_book(
     request: Request,
     file: UploadFile = File(...),
+    voice: str = Form("af_heart"),
+    generation_scope: str = Form("first_chapter"),
     db: AsyncSession = Depends(get_db),
 ) -> BookCreatedResponse:
+
+    if voice not in SUPPORTED_VOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=("Unsupported narration voice."),
+        )
+
+    if generation_scope not in {
+        "first_chapter",
+        "all_chapters",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid generation scope. "
+                "Must be 'first_chapter' or 'all_chapters'."
+            ),
+        )
+    
     if not file.filename:
         raise HTTPException(
             status_code=400,
@@ -99,6 +131,7 @@ async def upload_book(
         original_path=str(
             pdf_path
         ),
+        voice=voice,
         status="queued",
         stage="queued",
         progress=0,
@@ -129,12 +162,16 @@ async def upload_book(
         request.app.state.arq_pool
     )
 
+    chapter_limit = (
+        1 if generation_scope == "first_chapter" else None
+    )
+    
     await arq.enqueue_job(
         "process_book",
         book_id,
         str(pdf_path),
         title,
-        1,
+        chapter_limit,
         _job_id=book_id,
     )
 
@@ -260,6 +297,93 @@ async def continue_book(
         title=book.title,
         status="queued",
     )
+
+
+@router.delete("/{book_id}")
+async def delete_book(
+    book_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str | bool]:
+    # Find the book first.
+    result = await db.execute(
+        select(Book).where(Book.id == book_id)
+    )
+    book = result.scalar_one_or_none()
+
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Book not found.",
+        )
+
+    # Never delete a book while a generation job is active.
+    if book.status in {"queued", "processing"}:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete a book while generation "
+                "is queued or processing."
+            ),
+        )
+
+    # Derive the directory from the stored book ID and
+    # verify that it stays directly inside STORAGE_ROOT.
+    storage_root = STORAGE_ROOT.resolve()
+    book_directory = (
+        storage_root / book.id
+    ).resolve()
+
+    if book_directory.parent != storage_root:
+        raise HTTPException(
+            status_code=500,
+            detail="Invalid storage path for this book.",
+        )
+
+    # Explicitly delete chapter rows because the models
+    # do not configure a database/ORM cascade.
+    await db.execute(
+        delete(Chapter).where(
+            Chapter.book_id == book_id
+        )
+    )
+
+    await db.delete(book)
+    await db.commit()
+
+    # Remove the stored PDF, generated audio, manifest,
+    # and temporary work directory after the DB commit.
+    files_removed = True
+
+    try:
+        shutil.rmtree(book_directory)
+    except FileNotFoundError:
+        # The directory may already have been removed.
+        pass
+    except OSError:
+        files_removed = False
+        logger.exception(
+            "Could not remove storage directory %s "
+            "for deleted book %s",
+            book_directory,
+            book_id,
+        )
+
+    if files_removed:
+        message = "Book and stored files deleted."
+    else:
+        message = (
+            "Book deleted from the database, but some "
+            "stored files could not be removed. Check "
+            "the backend log."
+        )
+
+    return {
+        "book_id": book_id,
+        "message": message,
+        "files_removed": files_removed,
+    }
+
+
 
 @router.get(
     "",
@@ -537,6 +661,164 @@ async def get_chapter_audio(
             chapter.filename
             or audio_path.name
         ),
+    )
+
+
+@router.get("/{book_id}/download-chapters")
+async def download_chapters(
+    book_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    # Verify that the book exists.
+    book_result = await db.execute(
+        select(Book).where(Book.id == book_id)
+    )
+    book = book_result.scalar_one_or_none()
+
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Book not found.",
+        )
+
+    # Fetch completed chapters in reading order.
+    result = await db.execute(
+        select(Chapter)
+        .where(
+            Chapter.book_id == book_id,
+            Chapter.status == "completed",
+        )
+        .order_by(
+            Chapter.chapter_number.is_(None),
+            Chapter.chapter_number,
+            Chapter.id,
+        )
+    )
+    chapters = result.scalars().all()
+
+    if not chapters:
+        raise HTTPException(
+            status_code=409,
+            detail="No completed chapter audio is available yet.",
+        )
+
+    # Validate every completed chapter before building the ZIP.
+    archive_entries: list[tuple[Path, str]] = []
+
+    for chapter in chapters:
+        if not chapter.audio_path:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Audio path is missing for chapter "
+                    f"'{chapter.title}'."
+                ),
+            )
+
+        audio_path = Path(chapter.audio_path)
+
+        if not audio_path.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Audio file is missing for chapter "
+                    f"'{chapter.title}'."
+                ),
+            )
+
+        # Use only the filename, never a stored directory path,
+        # as the ZIP entry name.
+        archive_name = Path(
+            chapter.filename or audio_path.name
+        ).name
+
+        archive_entries.append(
+            (audio_path, archive_name)
+        )
+
+    safe_title = re.sub(
+        r"[^\w.-]+",
+        "_",
+        book.title,
+    ).strip("._") or book.id
+
+    download_filename = f"{safe_title}-chapters.zip"
+
+    # Create the archive in a unique temporary directory.
+    temp_directory = Path(
+        tempfile.mkdtemp(prefix="audiobook-chapters-")
+    )
+    archive_path = temp_directory / download_filename
+
+    def create_archive() -> None:
+        with zipfile.ZipFile(
+            archive_path,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            for source_path, archive_name in archive_entries:
+                archive.write(
+                    source_path,
+                    arcname=archive_name,
+                )
+
+    try:
+        # ZIP compression can take time; keep it off the event loop.
+        await run_in_threadpool(create_archive)
+    except Exception:
+        shutil.rmtree(
+            temp_directory,
+            ignore_errors=True,
+        )
+        logger.exception(
+            "Failed to create chapter archive for book %s",
+            book_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to package chapter audio files.",
+        ) from None
+
+    return FileResponse(
+        path=archive_path,
+        media_type="application/zip",
+        filename=download_filename,
+        background=BackgroundTask(
+            shutil.rmtree,
+            temp_directory,
+            ignore_errors=True,
+        ),
+    )
+
+
+@router.get("/voice-previews/{voice}")
+async def get_voice_preview(
+    voice: str,
+) -> FileResponse:
+    if voice not in SUPPORTED_VOICES:
+        raise HTTPException(
+            status_code=404,
+            detail="Voice preview not found.",
+        )
+
+    preview_path = (
+        Path("storage/voice_previews")
+        / f"{voice}.wav"
+    )
+
+    if not preview_path.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Voice preview is not available yet. "
+                "Please ensure the worker has generated "
+                "the preview samples."
+            ),
+        )
+
+    return FileResponse(
+        path=preview_path,
+        media_type="audio/wav",
     )
 
 

@@ -124,20 +124,24 @@ function BookCard({
         </div>
       )}
 
-      {isAudiobookReady(book) && (
-          <div className="book-actions">
-            <p className="ready-message">
-              Audiobook ready. View the chapters to listen.
-            </p>
+      {book.chapter_count > 0 && (
+        <div className="book-actions">
+          <p className="ready-message">
+            {isAudiobookReady(book)
+              ? "Audiobook ready. View the chapters to listen."
+              : book.completed_chapter_count > 0
+                ? "Completed chapters are ready to play."
+                : "View chapter generation progress."}
+          </p>
 
-            <button
-              type="button"
-              onClick={() => onViewChapters(book)}
-            >
-              View chapters
-            </button>
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={() => onViewChapters(book)}
+          >
+            View chapters
+          </button>
+        </div>
+      )}
 
       {book.status === "failed" && (
         <p className="error-message">

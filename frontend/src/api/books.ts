@@ -38,12 +38,21 @@ export interface Chapter {
   status: string;
 }
 
+export type GenerationScope =
+  | "first_chapter"
+  | "all_chapters";
+
+
 export async function uploadBook(
   file: File,
+  voice: string = "af_heart",
+  generationScope: GenerationScope = "first_chapter",
 ): Promise<BookCreatedResponse> {
   const formData = new FormData();
 
   formData.append("file", file);
+  formData.append("voice", voice);
+  formData.append("generation_scope", generationScope);
 
   const response = await fetch("/api/books", {
     method: "POST",
@@ -51,13 +60,18 @@ export async function uploadBook(
   });
 
   if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+
     throw new Error(
-      `Upload failed: ${response.status}`,
+      errorBody?.detail ??
+        `Upload failed: ${response.status}`,
     );
   }
 
   return response.json();
 }
+
+
 
 export async function getBookStatus(
   bookId: string,
@@ -108,6 +122,18 @@ export function getChapterAudioUrl(
   chapterId: number,
 ): string {
   return `/api/books/${bookId}/chapters/${chapterId}/audio`;
+}
+
+export function getVoicePreviewUrl(
+  voice: string,
+): string {
+  return `/api/books/voice-previews/${voice}`;
+}
+
+export function getChapterArchiveUrl(
+  bookId: string,
+): string {
+  return `/api/books/${bookId}/download-chapters`;
 }
 
 // Kept temporarily for the existing player.

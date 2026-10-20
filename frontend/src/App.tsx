@@ -46,6 +46,34 @@ function App() {
     setSelectedChapter({ book, chapter, chapters, autoPlay });
   };
 
+  const handleChaptersUpdated = useCallback(
+  (bookId: string, updatedChapters: Chapter[]) => {
+    setSelectedChapter((current) => {
+      if (
+        !current ||
+        current.book.id !== bookId
+      ) {
+        return current;
+      }
+
+      const updatedCurrentChapter =
+        updatedChapters.find(
+          (chapter) =>
+            chapter.id === current.chapter.id,
+        );
+
+      return {
+        ...current,
+        chapter:
+          updatedCurrentChapter ??
+          current.chapter,
+        chapters: updatedChapters,
+        };
+      });
+    },
+    [],
+  );
+
   const activateGeneration = useCallback(
     (bookId: string) => {
       setActiveGenerationIds((currentIds) => {
@@ -176,6 +204,7 @@ function App() {
           handleContinueGeneration
         }
         onDeleteBook={handleDeleteBook}
+        onChaptersUpdated={handleChaptersUpdated}
       />
 
       {selectedChapter && (
@@ -185,6 +214,9 @@ function App() {
           chapterId={selectedChapter.chapter.id}
           title={`${selectedChapter.book.title} — ${selectedChapter.chapter.title}`}
           chapters={selectedChapter.chapters}
+          generationActive={activeGenerationIds.includes(
+            selectedChapter.book.id,
+          )}
           onSelectChapter={(chapter, autoPlay = false) => {
             setSelectedChapter({
               ...selectedChapter,

@@ -20,6 +20,7 @@ interface AudioPlayerProps {
     chapter: Chapter,
     autoPlay?: boolean,
 ) => void;  onClose: () => void;
+  generationActive: boolean;
 }
 
 function getPlaybackPositionKey(
@@ -51,6 +52,7 @@ function AudioPlayer({
   title,
   chapters,
   autoPlay = false,
+  generationActive,
   onSelectChapter,
   onClose,
 }: AudioPlayerProps) {
@@ -62,6 +64,12 @@ function AudioPlayer({
   const [volume, setVolume] = useState(1);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [
+    waitingAfterEndedChapterId,
+    setWaitingAfterEndedChapterId,
+  ] = useState<number | null>(null);
+
+  const autoAdvancedFromRef = useRef<number | null>(null);
 
   const currentIndex = chapters.findIndex(
     (chapter) => chapter.id === chapterId,
@@ -85,6 +93,16 @@ function AudioPlayer({
 
   const previousChapter = findPlayableChapter(-1);
   const nextChapter = findPlayableChapter(1);
+
+  const hasPendingUpcomingChapter =
+  currentIndex >= 0 &&
+  chapters
+    .slice(currentIndex + 1)
+    .some(
+      (chapter) =>
+        chapter.status === "pending" ||
+        chapter.status === "processing",
+    );
 
   const audioUrl = getChapterAudioUrl(bookId, chapterId);
 
@@ -192,8 +210,35 @@ function AudioPlayer({
 
     if (nextChapter) {
       onSelectChapter(nextChapter, true);
+      return;
+    }
+
+    if (
+      generationActive &&
+      hasPendingUpcomingChapter
+    ) {
+      setWaitingAfterEndedChapterId(chapterId);
     }
   };
+
+  useEffect(() => {
+  if (
+    waitingAfterEndedChapterId !== chapterId ||
+    !nextChapter ||
+    autoAdvancedFromRef.current === chapterId
+  ) {
+    return;
+  }
+
+  autoAdvancedFromRef.current = chapterId;
+
+  onSelectChapter(nextChapter, true);
+  }, [
+  waitingAfterEndedChapterId,
+  chapterId,
+  nextChapter,
+  onSelectChapter,
+  ]);
 
   return (
     <section className="audio-player">
@@ -270,6 +315,30 @@ function AudioPlayer({
           {error}
         </p>
       )}
+
+      {waitingAfterEndedChapterId === chapterId &&
+        !nextChapter &&
+        generationActive && (
+          <p
+            className="audio-player-waiting"
+            role="status"
+          >
+            This chapter has finished. Waiting for the next
+            chapter to finish generating…
+          </p>
+        )}
+
+      {waitingAfterEndedChapterId === chapterId &&
+        !nextChapter &&
+        !generationActive && (
+          <p
+            className="audio-player-waiting"
+            role="status"
+          >
+            No next chapter is ready yet. Continue generation
+            to resume the audiobook.
+          </p>
+        )}
 
       <div className="audio-player-controls">
         <button

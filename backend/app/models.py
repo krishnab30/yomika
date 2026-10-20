@@ -21,6 +21,13 @@ class Book(Base):
         nullable=False,
     )
 
+    voice: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="af_heart",
+        server_default="af_heart"
+    )
+
     original_filename: Mapped[str] = mapped_column(
         String(500),
         nullable=False,

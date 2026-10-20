@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -24,6 +25,10 @@ interface BookLibraryProps {
   ) => void;
   onContinueGeneration: (book: Book) => void;
   onDeleteBook: (book: Book) => void;
+  onChaptersUpdated: (
+  bookId: string,
+  chapters: Chapter[],
+) => void;
 }
 
 function BookLibrary({
@@ -33,18 +38,29 @@ function BookLibrary({
   onPlayChapter,
   onContinueGeneration,
   onDeleteBook,
+  onChaptersUpdated,
 }: BookLibraryProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const chapterPanelRef = useRef<HTMLElement | null>(null);
+
+  const selectedBookId = selectedBook?.id;
 
   const handleChaptersLoaded = useCallback(
     (loadedChapters: Chapter[]) => {
       setChapters(loadedChapters);
+
+      if (selectedBookId) {
+        onChaptersUpdated(
+          selectedBookId,
+          loadedChapters,
+        );
+      }
     },
-    [],
+    [selectedBookId, onChaptersUpdated],
   );
 
   useEffect(() => {
@@ -144,6 +160,22 @@ function BookLibrary({
     onGenerationFinished,
   ]);
 
+  useEffect(() => {
+    if (!selectedBook || chapters.length === 0) {
+      return;
+    }
+
+    const chapterListHeader =
+      chapterPanelRef.current?.querySelector<HTMLElement>(
+        ".chapter-list-header",
+      );
+
+    chapterListHeader?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [selectedBook?.id, chapters.length]);
+
   const handleViewChapters = (book: Book) => {
     setSelectedBook(book);
     setChapters([]);
@@ -193,7 +225,7 @@ function BookLibrary({
       )}
 
       {selectedBook && (
-        <section className="chapter-panel">
+        <section className="chapter-panel" ref={chapterPanelRef}>
           <div className="chapter-panel-header">
             <h2>{selectedBook.title}</h2>
 
@@ -207,6 +239,7 @@ function BookLibrary({
 
           <ChapterList
             bookId={selectedBook.id}
+            bookStatus={selectedBook.status}
             onChaptersLoaded={handleChaptersLoaded}
             onPlayChapter={(chapter) => {
               onPlayChapter(selectedBook, chapter, chapters);

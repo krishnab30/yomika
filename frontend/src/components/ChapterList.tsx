@@ -1,6 +1,6 @@
 
-import { useEffect, useState } from "react";
-import { getChapters, type Chapter } from "../api/books";
+import { useEffect, useRef, useState } from "react";
+import { getChapters, getChapterAudioUrl, getChapterArchiveUrl, type Chapter } from "../api/books";
 
 function getChapterStatusLabel(status: string): string {
   switch (status) {
@@ -23,6 +23,7 @@ function getChapterStatusLabel(status: string): string {
 
 interface ChapterListProps {
   bookId: string;
+  bookStatus: string;
   onPlayChapter: (chapter: Chapter) => void;
   onChaptersLoaded: (chapters: Chapter[]) => void;
 }
@@ -71,27 +72,46 @@ export default function ChapterList({
   bookId,
   onPlayChapter,
   onChaptersLoaded,
+  bookStatus,
 }: ChapterListProps) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadedBookIdRef = useRef<string | null>(null);
+
 
   useEffect(() => {
     let cancelled = false;
+    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    async function loadChapters() {
-      setIsLoading(true);
+    const shouldPoll =
+      bookStatus === "queued" ||
+      bookStatus === "processing";
+
+    async function loadChapters(showLoading: boolean) {
+      if (showLoading) {
+        setIsLoading(true);
+      }
 
       try {
         const result = await getChapters(bookId);
 
-        if (!cancelled) {
-          setChapters(result);
-          setError(null);
-          onChaptersLoaded(result);
+        if (cancelled) {
+          return;
         }
+
+        setChapters(result);
+        setError(null);
+        loadedBookIdRef.current = bookId;
+        onChaptersLoaded(result);
       } catch (err) {
-        if (!cancelled) {
+        if (cancelled) {
+          return;
+        }
+
+        // Preserve the existing chapter list on a transient
+        // polling error. Show the error on the initial load.
+        if (showLoading) {
           setError(
             err instanceof Error
               ? err.message
@@ -99,18 +119,32 @@ export default function ChapterList({
           );
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && showLoading) {
           setIsLoading(false);
         }
       }
+
+      if (!cancelled && shouldPoll) {
+        pollTimeout = setTimeout(() => {
+          void loadChapters(false);
+        }, 2000);
+      }
     }
 
-    void loadChapters();
+    const showInitialLoading =
+      loadedBookIdRef.current !== bookId;
+
+    void loadChapters(showInitialLoading);
 
     return () => {
       cancelled = true;
+
+      if (pollTimeout !== null) {
+        clearTimeout(pollTimeout);
+      }
     };
-  }, [bookId, onChaptersLoaded]);
+  }, [bookId, bookStatus, onChaptersLoaded]);
+
 
   if (isLoading) {
     return <p>Loading chapters...</p>;
@@ -134,11 +168,21 @@ export default function ChapterList({
 
   return (
     <section aria-label="Chapter list">
-      <div>
+      <div className="chapter-list-header">
         <h3>Chapters</h3>
+
         <p>
           {completedCount} of {chapters.length} chapters ready
         </p>
+
+        {completedCount > 0 && (
+          <a
+            className="chapter-download-all-link"
+            href={getChapterArchiveUrl(bookId)}
+          >
+            Download all ready chapters (.zip)
+          </a>
+        )}
       </div>
 
       <ol>
@@ -162,13 +206,26 @@ export default function ChapterList({
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={!isCompleted}
-                onClick={() => onPlayChapter(chapter)}
-              >
-                Play
-              </button>
+              <div className="chapter-actions">
+                <button
+                  type="button"
+                  disabled={!isCompleted}
+                  onClick={() => onPlayChapter(chapter)}
+                >
+                  Play
+                </button>
+
+                {isCompleted && (
+                  <a
+                    className="button-secondary chapter-download-link"
+                    href={getChapterAudioUrl(bookId, chapter.id)}
+                    download={chapter.filename ?? undefined}
+                    aria-label={`Download ${getChapterLabel(chapter)}`}
+                  >
+                    Download
+                  </a>
+                )}
+              </div>
             </li>
           );
         })}

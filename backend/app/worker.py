@@ -20,13 +20,75 @@ from backend.app.services.audiobook_pipeline import (
 from backend.app.services.job_status import JobStatusStore
 from backend.app.services.kokoro_tts import KokoroProvider
 from backend.app.services.manifest import write_manifest
-
+from backend.app.services.voice_catalog import SUPPORTED_VOICES, VOICE_PREVIEW_TEXT
 
 REDIS_SETTINGS = RedisSettings(
     host="127.0.0.1",
     port=6379,
 )
 
+VOICE_PREVIEW_ROOT = Path(
+    "storage/voice_previews"
+)
+
+
+def generate_missing_voice_previews(
+    provider: KokoroProvider,
+) -> None:
+    """
+    Generate and cache a short sample for each voice.
+    Existing valid samples are reused.
+    """
+    VOICE_PREVIEW_ROOT.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for voice in SUPPORTED_VOICES:
+        output_path = (
+            VOICE_PREVIEW_ROOT
+            / f"{voice}.wav"
+        )
+
+        if (
+            output_path.is_file()
+            and output_path.stat().st_size > 44
+        ):
+            print(
+                f"Voice preview cached: {voice}"
+            )
+            continue
+
+        temporary_path = (
+            VOICE_PREVIEW_ROOT
+            / f".{voice}.tmp.wav"
+        )
+
+        try:
+            provider.synthesize(
+                VOICE_PREVIEW_TEXT,
+                temporary_path,
+                voice=voice,
+            )
+
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size <= 44
+            ):
+                raise RuntimeError(
+                    f"Invalid preview generated for {voice}"
+                )
+
+            # Replace the cache file only after successful synthesis.
+            temporary_path.replace(output_path)
+
+            print(
+                f"Voice preview generated: {voice}"
+            )
+
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
 
 async def startup(ctx: dict) -> None:
     """
@@ -64,6 +126,15 @@ async def startup(ctx: dict) -> None:
     ctx["tts_provider"] = provider
 
     print("Kokoro loaded.")
+    print("Preparing voice preview samples...")
+
+    await loop.run_in_executor(
+        executor,
+        generate_missing_voice_previews,
+        provider,
+    )
+
+    print("Voice preview samples ready.")
 
 
 async def update_book_record(
@@ -262,6 +333,8 @@ async def process_book(
                 "skipped": True,
                 "reason": "Book not found",
             }
+
+        voice = book.voice or "af_heart"
 
         existing_completed_count = await session.scalar(
             select(
@@ -476,7 +549,7 @@ async def process_book(
                         provider=provider,
                         chunk=chunk,
                         output_path=chunk_path,
-                        voice="af_heart",
+                        voice=voice,
                     ),
                 )
 

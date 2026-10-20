@@ -1,10 +1,11 @@
 import {
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
 } from "react";
 
-import { uploadBook } from "../api/books";
+import { getVoicePreviewUrl, uploadBook , type GenerationScope, } from "../api/books";
 
 interface UploadBookProps {
   onUploadSuccess: (bookId: string) => void;
@@ -13,6 +14,18 @@ interface UploadBookProps {
 function UploadBook({ onUploadSuccess }: UploadBookProps) {
   const [selectedFile, setSelectedFile] =
     useState<File | null>(null);
+
+  const [selectedVoice, setSelectedVoice] =
+    useState("af_heart");
+
+  const [generationScope, setGenerationScope] =
+    useState<GenerationScope>("first_chapter");
+  
+  const previewAudioRef = 
+    useRef<HTMLAudioElement | null>(null);
+
+  const [previewMessage, setPreviewMessage] = 
+    useState("");
 
   const [isUploading, setIsUploading] =
     useState(false);
@@ -27,6 +40,39 @@ function UploadBook({ onUploadSuccess }: UploadBookProps) {
 
     setSelectedFile(file);
     setMessage("");
+  };
+
+  const handleVoiceChange = (
+  event: ChangeEvent<HTMLSelectElement>,
+) => {
+  const audio = previewAudioRef.current;
+
+  if (audio) {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+
+  setSelectedVoice(event.target.value);
+  setPreviewMessage("");
+};
+
+  const handlePreviewVoice = async () => {
+    const audio = previewAudioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    setPreviewMessage("");
+
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+    } catch {
+      setPreviewMessage(
+        "Unable to play the preview. Check that the backend is running and the preview file is available.",
+      );
+    }
   };
 
   const handleSubmit = async (
@@ -45,6 +91,8 @@ function UploadBook({ onUploadSuccess }: UploadBookProps) {
     try {
       const result = await uploadBook(
         selectedFile,
+        selectedVoice,
+        generationScope,
       );
 
       setMessage(
@@ -65,7 +113,7 @@ function UploadBook({ onUploadSuccess }: UploadBookProps) {
   };
 
   return (
-    <section>
+    <section className="upload-book-section">
       <h2>Upload a book</h2>
 
       <form onSubmit={handleSubmit}>
@@ -75,8 +123,95 @@ function UploadBook({ onUploadSuccess }: UploadBookProps) {
           onChange={handleFileChange}
         />
 
+        <label htmlFor="voice-select">
+          Narration voice
+        </label>
+
+        <select
+          id="voice-select"
+          value={selectedVoice}
+          onChange={handleVoiceChange}
+          disabled={isUploading}
+        >
+          <option value="af_heart">
+            Heart — Female
+          </option>
+          <option value="af_bella">
+            Bella — Female
+          </option>
+          <option value="af_nicole">
+            Nicole — Female
+          </option>
+          <option value="af_sarah">
+            Sarah — Female
+          </option>
+          <option value="am_michael">
+            Michael — Male
+          </option>
+          <option value="am_fenrir">
+            Fenrir — Male
+          </option>
+        </select>
+
+        <div className="voice-preview-controls">
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => void handlePreviewVoice()}
+          disabled={isUploading}
+        >
+          Preview voice
+        </button>
+
+        <audio
+          key={selectedVoice}
+          ref={previewAudioRef}
+          src={getVoicePreviewUrl(selectedVoice)}
+          controls
+          preload="none"
+          aria-label={`Preview of ${selectedVoice}`}
+        />
+      </div>
+
+
+        <label htmlFor="generation-scope">
+          Generation scope
+        </label>
+
+        <select
+          id="generation-scope"
+          value={generationScope}
+          onChange={(event) =>
+            setGenerationScope(
+              event.target.value as GenerationScope,
+            )
+          }
+          disabled={isUploading}
+        >
+          <option value="first_chapter">
+            First chapter only — quick test
+          </option>
+          <option value="all_chapters">
+            Entire book — generate all chapters
+          </option>
+        </select>
+
+        <p className="generation-scope-help">
+          {generationScope === "first_chapter"
+            ? "Generate the first chapter now. Generate the remaining chapters later using Continue generation."
+            : "Generate all chapters immediately. This may take a while for longer books."}
+        </p>
+
+
+      {previewMessage && (
+        <p role="status" className="error-message">
+          {previewMessage}
+        </p>
+      )}
+
         <button
           type="submit"
+          className="upload-submit-button"
           disabled={
             isUploading || !selectedFile
           }
